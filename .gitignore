@@ -1,6 +1,7 @@
 # Este projeto
 /dados/
 # *.ipynb
+*.zip
 
 # Mac OS-specific storage files
 .DS_Store
