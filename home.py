@@ -1,23 +1,19 @@
 ################################################################################
 # %% IMPORTAÇÕES
 import geopandas as gpd # para trabalhar com os dados geográficos
-
 from joblib import load # para importar o modelo
-
 import numpy as np
 import pandas as pd
-
 import pydeck as pdk
+import shapely
 import streamlit as st # interface WEB - https://streamlit.io/
 
 # arquivos utilizados
 from notebooks.src.config import(
     DADOS_GEO_MEDIAN,
-    DADOS_LIMPOS,
+    # DADOS_LIMPOS,
     MODELO_FINAL
 )
-
-
 
 
 ################################################################################
@@ -27,15 +23,50 @@ from notebooks.src.config import(
 
 @st.cache_data
 def carregar_dados_geo():
-    return gpd.read_parquet(DADOS_GEO_MEDIAN)
+    # return gpd.read_parquet(DADOS_GEO_MEDIAN) # as camadas não funcionan sem o tratamento abaixo criado pelo Chat GPT
+    gdf_geo = gpd.read_parquet(DADOS_GEO_MEDIAN)
 
-@st.cache_data
-def carregar_dados_limpos():
-    return pd.read_parquet(DADOS_LIMPOS)
+    # Explode MultiPolygons into individual polygons
+    gdf_geo = gdf_geo.explode(ignore_index=True)
+
+    # Function to check and fix invalid geometries
+    def fix_and_orient_geometry(geometry):
+        if not geometry.is_valid:
+            geometry = geometry.buffer(0)  # Fix invalid geometry
+        # Orient the polygon to be counter-clockwise if it's a Polygon or MultiPolygon
+        if isinstance(
+            geometry, (shapely.geometry.Polygon, shapely.geometry.MultiPolygon)
+        ):
+            geometry = shapely.geometry.polygon.orient(geometry, sign=1.0)
+        return geometry
+
+    # Apply the fix and orientation function to geometries
+    gdf_geo["geometry"] = gdf_geo["geometry"].apply(fix_and_orient_geometry)
+
+    # Extract polygon coordinates
+    def get_polygon_coordinates(geometry):
+        return (
+            [[[x, y] for x, y in geometry.exterior.coords]]
+            if isinstance(geometry, shapely.geometry.Polygon)
+            else [
+                [[x, y] for x, y in polygon.exterior.coords]
+                for polygon in geometry.geoms
+            ]
+        )
+    
+    # Apply the coordinate conversion and store in a new column
+    gdf_geo["geometry"] = gdf_geo["geometry"].apply(get_polygon_coordinates)
+
+    return gdf_geo
+
+
+# @st.cache_data
+# def carregar_dados_limpos():
+#     return pd.read_parquet(DADOS_LIMPOS)
 
 @st.cache_data
 def get_nomes_condados():
-    return gdf_geo['name'].sort_values()
+    return sorted(gdf_geo['name'].unique())
 
 
 ################################################################################
@@ -52,10 +83,11 @@ def carregar_modelo():
 
 ################################################################################
 # %% DADOS EM CACHE
-df = carregar_dados_limpos()
+# df = carregar_dados_limpos()
 gdf_geo = carregar_dados_geo()
 condados = get_nomes_condados()
 modelo = carregar_modelo()
+
 
 ################################################################################
 # %% PAGINA
@@ -92,6 +124,14 @@ with coluna1:
     # bedrooms_per_room = st.number_input(label='Quartos por cômodo', min_value=0.0, max_value=5.0, value=0.2, format='%0.2f')
     # population_per_household = st.number_input(label='Pessoas por domicílio', min_value=0.0, max_value=6.0, value=2.0, format='%0.2f')
 
+
+
+    # df_valores_condado = gdf_geo.query(expr="name == @selecionar_condados").reset_index() # mais legível e melhor para grandes dataframes
+    df_valores_condado = gdf_geo[gdf_geo['name'] == selecionar_condados].reset_index() # melhor para dataframes menores, que é o caso...
+
+    # st.write(df_valores_condado)
+
+
     # True if the button was clicked on the last run of the app, False otherwise.
     botao_previsao = st.button(label='Prever preço')
 
@@ -103,13 +143,12 @@ with coluna1:
         colunas_condado = [
             'total_rooms', 'total_bedrooms', 'population', 'households',
             'ocean_proximity', 'rooms_per_household', 'bedrooms_per_room',
-            'population_per_household', 'latitude', 'longitude', # 'centroid', 
+            'population_per_household', 'latitude', 'longitude',
+            # 'name', 'geometry', 'centroid',
         ]
 
-        # array_valores_condado = gdf_geo.query(expr="name == @selecionar_condados")[colunas_condado].values[0] # mais legível e melhor para grandes dataframes
-        array_valores_condado = gdf_geo[gdf_geo['name'] == selecionar_condados][colunas_condado].values[0] # melhor para dataframes menores, que é o caso...
 
-        entrada_modelo = {k: v for k, v in zip(colunas_condado, array_valores_condado)}
+        entrada_modelo = {k: v for k, v in zip(colunas_condado, df_valores_condado[colunas_condado].values[0])}
         
         median_income /= 10 # os valores estão multiplicados por 10 mil, e estamos convertendo para 1 mil na apresentação
         # bins_income = [0, 1.5, 3, 4.5, 6, np.inf]
@@ -145,25 +184,57 @@ with coluna1:
 
 with coluna2:
 
-    # centroid = gdf_geo[gdf_geo['name'] == selecionar_condados]['centroid'].values[0]
-    latitude, longitude  = gdf_geo[gdf_geo['name'] == selecionar_condados][['latitude', 'longitude']].values[0]
-
     # localização inicial
     initial_view_state = pdk.ViewState(
-        # latitude=centroid.y,
-        # longitude=centroid.x,
-        latitude=float(latitude),
-        longitude=float(longitude),
+        latitude = float(df_valores_condado.loc[0, 'latitude']),
+        longitude = float(df_valores_condado.loc[0, 'longitude']),
         zoom=5,
         min_zoom=4,
         max_zoom=10,
-        pitch=50,
     )
+
+    # colore o estado da califórnia
+    polygon_layer = pdk.Layer(
+        type='PolygonLayer',
+        data=gdf_geo[['name', 'geometry']],
+        get_polygon='geometry',
+        get_fill_color=[0, 0, 255, 100], # RGB + alfa
+        get_line_color=[255, 255, 255],
+        get_line_width=50,
+        pickable=True, # necessário para funcinar o tooltip
+        auto_highlight = True,
+    )
+
+    # colore de cor diferente o condado selecionado
+    highlight_layer = pdk.Layer(
+        type='PolygonLayer',
+        data=df_valores_condado[['name', 'geometry']],
+        get_polygon='geometry',
+        get_fill_color=[255, 0, 0, 100], # RGB + alfa
+        get_line_color=[0, 0, 0],
+        get_line_width=500,
+        pickable=True, # necessário para funcinar o tooltip
+        auto_highlight = True,
+    )
+
+    tooltip = {
+        'html': '<b>Condado:</b> {name}',
+        'style': {
+            'backgroundcolor': 'steelblue',
+            'color': 'white',
+            'fontsize': '10px',
+        },
+    }
 
     # mapa
     mapa = pdk.Deck(
         initial_view_state=initial_view_state,
         map_style='light',
+        layers=[
+            polygon_layer,
+            highlight_layer,
+        ],
+        tooltip=tooltip,
     )
 
     # plotando o mapa
