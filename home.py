@@ -1,6 +1,6 @@
 ################################################################################
 # %% IMPORTAÇÕES
-# import geopandas as gpd # para trabalhar com os dados geográficos
+import geopandas as gpd # para trabalhar com os dados geográficos
 
 # from joblib import load # para importar o modelo
 
@@ -8,14 +8,14 @@
 from numpy  import digitize, inf as infinito
 
 import pydeck as pdk
-# import shapely
+import shapely
 import streamlit as st # interface WEB - https://streamlit.io/
 
 # arquivos utilizados
-# from notebooks.src.config import(
-#     DADOS_GEO_MEDIAN,
+from notebooks.src.config import(
+    DADOS_GEO_MEDIAN,
 #     MODELO_FINAL
-# )
+)
 
 
 ################################################################################
@@ -25,9 +25,9 @@ import streamlit as st # interface WEB - https://streamlit.io/
 
 @st.cache_data
 def carregar_dados_geo():
-    import geopandas as gpd
-    from notebooks.src.config import DADOS_GEO_MEDIAN
-    import shapely
+    # import geopandas as gpd
+    # from notebooks.src.config import DADOS_GEO_MEDIAN
+    # import shapely
 
     # return gpd.read_parquet(DADOS_GEO_MEDIAN) # as camadas não funcionan sem o tratamento abaixo criado pelo Chat GPT
     gdf_geo = gpd.read_parquet(DADOS_GEO_MEDIAN)
